@@ -228,7 +228,7 @@ class BoxCommand extends Command {
 	 * Initialize before the command is run
 	 * @returns {void}
 	 */
-	init() {
+	async init() {
 		DEBUG.init('Initializing Box CLI');
 		let originalArgs, originalFlags;
 		if (this.argv.some(arg => arg.startsWith('--bulk-file-path'))
@@ -247,7 +247,7 @@ class BoxCommand extends Command {
 		this.flags = flags;
 		this.args = args;
 		this.settings = this._loadSettings();
-		this.client = this.getClient();
+		this.client = await this.getClient();
 
 		if (this.isBulk) {
 			this.constructor.args = originalArgs;
@@ -499,8 +499,8 @@ class BoxCommand extends Command {
 	 *
 	 * @returns {BoxClient} The client for making API calls in the command
 	 */
-	getClient() {
-		// Allow some commands (e.g. configure:environments:add) to skip client setup so they can run
+	 async getClient() {
+		// Allow some commands (e.g. configure:environments:add, login) to skip client setup so they can run
 		if (this.constructor.noClient) {
 			return null;
 		}
@@ -518,6 +518,30 @@ class BoxCommand extends Command {
 			}
 			this.sdk = sdk;
 			client = sdk.getBasicClient(this.flags.token);
+		} else if (environmentsObj.default && environmentsObj.default == 'oauth') {
+			let environment = environmentsObj.environments[environmentsObj.default];
+			DEBUG.init('Using environment %s %O', environmentsObj.default, environment);
+			let tokenCache = new CLITokenCache(environmentsObj.default);
+
+			let sdk = new BoxSDK({
+				clientID: environment.clientId,
+				clientSecret: environment.clientSecret,
+				...SDK_CONFIG,
+			});
+			if (this.settings.enableProxy) {
+				sdk.configure({ proxy: this.settings.proxy });
+			}
+			this.sdk = sdk;
+			let tokenInfo = await new Promise((resolve, reject) => {
+				tokenCache.read((error, tokenInfo) => {
+					if (error) {
+						reject(error);
+					} else {
+						resolve(tokenInfo);
+					}
+				});
+			  });
+			client = sdk.getPersistentClient(tokenInfo, tokenCache);
 		} else if (environmentsObj.default) {
 			let environment = environmentsObj.environments[environmentsObj.default];
 			DEBUG.init('Using environment %s %O', environmentsObj.default, environment);
